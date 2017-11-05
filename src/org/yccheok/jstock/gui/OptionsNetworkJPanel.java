@@ -540,6 +540,7 @@ public class OptionsNetworkJPanel extends javax.swing.JPanel implements JStockOp
         priceSourceEntries.put(PriceSource.Yahoo.name(), GUIBundle.getString("OptionsNetworkJPanel_YahooFinance"));
         priceSourceEntries.put(PriceSource.Google.name(), GUIBundle.getString("OptionsNetworkJPanel_GoogleFinance"));
         priceSourceEntries.put(PriceSource.IEX.name(), GUIBundle.getString("OptionsNetworkJPanel_IEX"));
+        priceSourceEntries.put(PriceSource.EODData.name(), GUIBundle.getString("OptionsNetworkJPanel_EODData"));
     }
     
     // Variables declaration - do not modify//GEN-BEGIN:variables
