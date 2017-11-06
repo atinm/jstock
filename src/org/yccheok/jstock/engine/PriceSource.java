@@ -9,5 +9,5 @@ public enum PriceSource {
     EODData,
     @Deprecated
     KLSEInfo;   // Still here for xstream backward compatible. Shall be removed
-                // after a while.
+    // after a while.
 }

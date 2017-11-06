@@ -16,15 +16,23 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-
 package org.yccheok.jstock.engine;
 
 import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
 
 /**
  *
@@ -64,259 +72,192 @@ public class EODDataStockHistoryServer implements StockHistoryServer {
     public EODDataStockHistoryServer(Code code, Duration duration) throws StockHistoryNotFoundException {
         this.code = code;
         this.duration = duration;
-        
-        String _eoddataCode = Utils.toCompleteUnitedStatesGoogleFormat(code);
-        if (_eoddataCode == null) {
-            _eoddataCode = Utils.toGoogleFormat(code);
-        }
-        
-        this.eoddataCode = _eoddataCode;
-        
-        final StringBuilder stringBuilder = new StringBuilder("http://www.eoddata.com/finance/getprices?f=d,c,v,o,h,l&i=86400&p=");
-                
-        // EODData Finance doesn't provide a good facility to specific duration.
-        // For instance, the below request will only return 50 rows, instead of
-        // 3653 rows.        
-        // http://www.eoddata.com/finance/getprices?f=d,c,v,o,h,l&i=86400&p=3653d&ts=1383667200000&q=SAN
-        //
-        // In view with that, we will ignore duration completely.
-        //
-        stringBuilder.append("10Y&ts=").append(System.currentTimeMillis());
-        //long days = duration.getDurationInDays();
-        //stringBuilder.append(days).append("d&ts=");
-        //stringBuilder.append(duration.getEndDate().getTime().getTime()).append("d");
-        
-        String eoddataCodeStr = eoddataCode;
-        // Turn "INDEXDJX:.DJI" into "INDEXDJX" and ".DJI".
-        String[] result = eoddataCodeStr.split(":");
-        
-        try {
-            if (result.length == 2) {
-                stringBuilder.append("&q=");
-                stringBuilder.append(java.net.URLEncoder.encode(result[1], "UTF-8"));
-                stringBuilder.append("&x=");
-                stringBuilder.append(java.net.URLEncoder.encode(result[0], "UTF-8"));
-            } else {
-                stringBuilder.append("&q=");
-                stringBuilder.append(java.net.URLEncoder.encode(eoddataCodeStr, "UTF-8"));
-            }
-        } catch (UnsupportedEncodingException ex) {
-            throw new StockHistoryNotFoundException(null, ex);
-        }
-        
-        final String location = stringBuilder.toString();
-        
-        boolean success = false;
-        
-        for (int retry = 0; retry < NUM_OF_RETRY; retry++) {
-            final String respond = org.yccheok.jstock.gui.Utils.getResponseBodyAsStringBasedOnProxyAuthOption(location);
+        Boolean success = false;
 
-            if (respond == null) {
-                continue;
-            }
-
-            success = parse(respond);
-
-            if (success) {
-                break;
-            }
-        }
-        
-        if (success == false) {
-            throw new StockHistoryNotFoundException(code.toString());
-        }
-    }
-    
-    private boolean parse(String respond) {
         historyDatabase.clear();
         timestamps.clear();
-        
+
         final long startTimeInMilli = this.duration.getStartDate().getTime().getTime();
         final long endTimeInMilli = this.duration.getEndDate().getTime().getTime();
-        
-        String[] stockDatas = respond.split("\r\n|\r|\n");
-        
+
         double previousClosePrice = Double.MAX_VALUE;
-        long time = 0;
-        
+        long date = 0;
+
         Symbol symbol = Symbol.newInstance(code.toString());
         String name = symbol.toString();
         Board board = Board.Unknown;
         Industry industry = Industry.Unknown;
-        Calendar calendar = null;
-        boolean initialized = false;
-        
+        Calendar calendar = Calendar.getInstance();
+
+        // Atin: offset from New York since eoddata is New York time.
         long TIMEZONE_OFFSET = 0;
 
-        for (String stockData : stockDatas) {
-            // NYSE : TIMEZONE_OFFSET=-300
-            
-            if (stockData.isEmpty()) {
-                continue;
-            }
-            
-            char c = stockData.charAt(0);
-            if (c != 'a' && false == Character.isDigit(c)) {
-                if (stockData.startsWith("TIMEZONE_OFFSET")) {
-                    String[] fields = stockData.split("=");
-                    if (fields.length == 2) {
-                        try {
-                            TIMEZONE_OFFSET = Long.parseLong(fields[1]);
-                        } catch (NumberFormatException ex) {
-                            log.error(null, ex);
-                        }
-                    }
-                }
-                continue;
-            }
-            
-            String[] fields = stockData.split(",");
-            
-            // DATE,CLOSE,HIGH,LOW,OPEN,VOLUME
-            if (fields.length < 6) {
-                continue;
-            }
-            
-            long currentTime = 0;
-            
-            final String fields0 = fields[0];
-            if (fields0.charAt(0) == 'a') {
-                if (fields0.length() > 1) {
-                    String timeStr = fields0.substring(1);
-                    try {
-                        time = Long.parseLong(timeStr);
-                    } catch (NumberFormatException ex) {
-                        log.error(null, ex);
-                        continue;
-                    }
-                    
-                    currentTime = time;
-                }
-            } else {
-                int index = 0;
-                try {
-                    index = Integer.parseInt(fields0);
-                } catch (NumberFormatException ex) {
-                    log.error(null, ex);
-                    continue;
-                } 
-                
-                currentTime = time + (index * 60*60*24);
-            }
-            
-            if (initialized == false) {
-                Stock stock = stockServer.getStock(code);
-                symbol = stock.symbol;
-                name = stock.getName();
-                board = stock.getBoard();
-                industry = stock.getIndustry();
-                
-                calendar = Calendar.getInstance();
-                
-                initialized = true;
-            }
-            
-            long currentTimeInMilli = currentTime*1000;
-            
-            // Convert it to local time respect to stock exchange.
-            // TIMEZONE_OFFSET is in minute.
-            currentTimeInMilli = currentTimeInMilli + (TIMEZONE_OFFSET * 60 * 1000);
-            
-            // Remove time information, by resetting it to 00:00
-            currentTimeInMilli = currentTimeInMilli / 1000 / 24 / 60 / 60;
-            currentTimeInMilli = currentTimeInMilli * 60 * 60 * 24 * 1000;
-            
-            // Make it as local timestamp.
-            //
-            // For instance, Greenwich is 1:30pm right now.
-            // We want to make Malaysia 1:30pm right now.
-            //
-            // That's why we are having -ve.
-            calendar.setTimeInMillis(currentTimeInMilli);        
-            int offset = -(calendar.get(Calendar.ZONE_OFFSET) + calendar.get(Calendar.DST_OFFSET));
-            currentTimeInMilli = currentTimeInMilli + offset;
-            
-            if (currentTimeInMilli < startTimeInMilli) {
-                continue;
-            }
-            if (currentTimeInMilli > endTimeInMilli) {
+        //Stock s = stockServer.getStock(code);
+        //symbol = s.symbol;
+        //name = s.getName();
+        //board = s.getBoard();
+        //industry = s.getIndustry();
+        int startDate = duration.getStartDate().getYear() * 10000
+                + duration.getStartDate().getMonth() * 100
+                + duration.getStartDate().getDate();
+        int endDate = duration.getEndDate().getYear() * 10000
+                + duration.getEndDate().getMonth() * 100
+                + duration.getEndDate().getDate();
+
+        Connection conn = this.connect();
+        if (conn == null) {
+            log.error("Could not open database, no history");
+            return;
+        }
+
+        String description = "SELECT name FROM symbols WHERE symbol = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(description)) {
+            // set the values
+            pstmt.setString(1, code.toString());
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                name = rs.getString("name") + " (" + symbol.toString() + ")";
                 break;
             }
-            
-            double closePrice = 0.0;
-            double highPrice = 0.0;
-            double lowPrice = 0.0;
-            double prevPrice = 0.0;
-            double openPrice = 0.0;            
-            // TODO: CRITICAL LONG BUG REVISED NEEDED.
-            long volume = 0;
-            //double adjustedClosePrice = 0.0;
+        } catch (SQLException e) {
+            log.error(e.getMessage());
+        }
 
-            try {
-                closePrice = Double.parseDouble(fields[1]);
-                highPrice = Double.parseDouble(fields[2]);
-                lowPrice = Double.parseDouble(fields[3]);
-                openPrice = Double.parseDouble(fields[4]);
-                prevPrice = (previousClosePrice == Double.MAX_VALUE) ? 0 : previousClosePrice;
-                
+        String history = "SELECT date, open, high, low, close, volume "
+                + "FROM daily WHERE symbol = ?";
+
+        try (PreparedStatement pstmt = conn.prepareStatement(history)) {
+
+            // set the values
+            pstmt.setString(1, code.toString());
+
+            //
+            ResultSet rs = pstmt.executeQuery();
+
+            // loop through the result set
+            while (rs.next()) {
+                log.debug(rs.getDouble("open") + "\t"
+                        + rs.getDouble("high") + "\t"
+                        + rs.getDouble("low") + "\t"
+                        + rs.getDouble("close") + "\t"
+                        + rs.getLong("volume"));
+                date = rs.getLong("date");
+                int year = (int) date / 10000;
+                int month = (int) (date - (year * 10000)) / 100;
+                int day = (int) (date - (year * 10000) - (month * 100));
+                DateTime dt = new DateTime(year, month, day, 0, 0, 0, 0, DateTimeZone.forID("America/New_York"));
+                // Convert it to local time respect to stock exchange.
+                // TIMEZONE_OFFSET is in minute.
+                long currentTimeInMilli = dt.getMillis();
+
+                // Make it as local timestamp.
+                //
+                // For instance, Greenwich is 1:30pm right now.
+                // We want to make Malaysia 1:30pm right now.
+                //
+                // That's why we are having -ve.
+                calendar.setTimeInMillis(currentTimeInMilli);
+                int offset = -(calendar.get(Calendar.ZONE_OFFSET) + calendar.get(Calendar.DST_OFFSET));
+                currentTimeInMilli = currentTimeInMilli + offset;
+
+                if (currentTimeInMilli < startTimeInMilli) {
+                    continue;
+                }
+                if (currentTimeInMilli > endTimeInMilli) {
+                    break;
+                }
+
+                double closePrice = 0.0;
+                double highPrice = 0.0;
+                double lowPrice = 0.0;
+                double prevPrice = 0.0;
+                double openPrice = 0.0;
                 // TODO: CRITICAL LONG BUG REVISED NEEDED.
-                volume = Long.parseLong(fields[5]);
-                //adjustedClosePrice = Double.parseDouble(fields[6]);
-            }
-            catch (NumberFormatException exp) {
-                log.error(null, exp);
-            }
-            
-            double changePrice = (previousClosePrice == Double.MAX_VALUE) ? 0 : closePrice - previousClosePrice;
-            double changePricePercentage = ((previousClosePrice == Double.MAX_VALUE) || (previousClosePrice == 0.0)) ? 0 : changePrice / previousClosePrice * 100.0;
-            
-            Stock stock = new Stock(
-                    code,
-                    symbol,
-                    name,
-                    null,
-                    board,
-                    industry,
-                    prevPrice,
-                    openPrice,
-                    closePrice, /* Last Price. */
-                    highPrice,
-                    lowPrice,
-                    volume,
-                    changePrice,
-                    changePricePercentage,
-                    0,
-                    0.0,
-                    0,
-                    0.0,
-                    0,
-                    0.0,
-                    0,
-                    0.0,
-                    0,
-                    0.0,
-                    0,
-                    0.0,
-                    0,
-                    currentTimeInMilli
-                    );
+                long volume = 0;
+                //double adjustedClosePrice = 0.0;
 
-            historyDatabase.put(currentTimeInMilli, stock);
-            
-            // Something we do not understand EODData server.
-            //if (timestamps.isEmpty()) {
+                try {
+                    closePrice = rs.getDouble("close");
+                    highPrice = rs.getDouble("high");
+                    lowPrice = rs.getDouble("low");
+                    openPrice = rs.getDouble("open");
+                    prevPrice = (previousClosePrice == Double.MAX_VALUE) ? 0 : previousClosePrice;
+
+                    // TODO: CRITICAL LONG BUG REVISED NEEDED.
+                    volume = rs.getLong("volume");
+                    //adjustedClosePrice = Double.parseDouble(fields[6]);
+                } catch (NumberFormatException exp) {
+                    log.error(null, exp);
+                }
+
+                double changePrice = (previousClosePrice == Double.MAX_VALUE) ? 0 : closePrice - previousClosePrice;
+                double changePricePercentage = ((previousClosePrice == Double.MAX_VALUE) || (previousClosePrice == 0.0)) ? 0 : changePrice / previousClosePrice * 100.0;
+
+                Stock stock = new Stock(
+                        code,
+                        symbol,
+                        name,
+                        null,
+                        board,
+                        industry,
+                        prevPrice,
+                        openPrice,
+                        closePrice, /* Last Price. */
+                        highPrice,
+                        lowPrice,
+                        volume,
+                        changePrice,
+                        changePricePercentage,
+                        0,
+                        0.0,
+                        0,
+                        0.0,
+                        0,
+                        0.0,
+                        0,
+                        0.0,
+                        0,
+                        0.0,
+                        0,
+                        0.0,
+                        0,
+                        currentTimeInMilli
+                );
+
+                historyDatabase.put(currentTimeInMilli, stock);
+
+                // Something we do not understand EODData server.
+                //if (timestamps.isEmpty()) {
                 timestamps.add(currentTimeInMilli);
-            //} else {
-            //    if (timestamps.get(timestamps.size() - 1) != currentTimeInMilli) {
-            //        timestamps.add(currentTimeInMilli);
-            //    }
-            //}
-            previousClosePrice = closePrice;                        
-        } 
-        
-        return (historyDatabase.size() > 0);
+                //} else {
+                //    if (timestamps.get(timestamps.size() - 1) != currentTimeInMilli) {
+                //        timestamps.add(currentTimeInMilli);
+                //    }
+                //}
+                previousClosePrice = closePrice;
+            }
+        } catch (SQLException e) {
+            log.error(e.getMessage());
+        }
+
+        success = (historyDatabase.size() > 0);
+        if (success == false) {
+            throw new StockHistoryNotFoundException(code.toString());
+        }
     }
-    
+
+    private Connection connect() {
+        // SQLite connection string
+        String url = "jdbc:sqlite:/Volumes/Data/MarketData/db/data.db";
+        Connection conn = null;
+        try {
+            conn = DriverManager.getConnection(url);
+        } catch (SQLException e) {
+            log.error(e.getMessage());
+        }
+        return conn;
+    }
+
     @Override
     public Stock getStock(long timestamp) {
         return historyDatabase.get(timestamp);
@@ -341,16 +282,132 @@ public class EODDataStockHistoryServer implements StockHistoryServer {
     public long getMarketCapital() {
         return 0;
     }
-    
-    // I believe EODData server is much more reliable than Yahoo! server. 
+
+    static void setFinalStatic(Field field) throws Exception {
+        field.setAccessible(true);
+
+        Field modifiersField = Field.class.getDeclaredField("modifiers");
+        modifiersField.setAccessible(true);
+        modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+    }
+
+    // I believe EODData server is much more reliable than Yahoo! server.
     private static final int NUM_OF_RETRY = 1;
-    private static final Period DEFAULT_HISTORY_PERIOD =  Period.Years10;
+    private static final Period DEFAULT_HISTORY_PERIOD = Period.Years5;
     private final java.util.Map<Long, Stock> historyDatabase = new HashMap<Long, Stock>();
-    private final java.util.List<Long> timestamps = new ArrayList<Long>();       
+    private final java.util.List<Long> timestamps = new ArrayList<Long>();
     private final Code code;
-    private final String eoddataCode;
-    private final StockServer stockServer = new EODDataStockServer();
+    private final StockServer stockServer = GoogleStockServerFactory.newInstance().getStockServer();
     private final Duration duration;
-    
+
     private static final Log log = LogFactory.getLog(EODDataStockHistoryServer.class);
+
+//    static {
+//        // Atin:
+//        // private static final Map<Class<? extends StockServerFactory>, PriceSource> classToPriceSourceMap = new HashMap<>(); to static
+//        // change org.yccheok.jstock.engine.Utils.classToPriceSourceMap to static
+//        Boolean loaded = false;
+//        try {
+//            Field cp = org.yccheok.jstock.engine.Utils.class.getDeclaredField("classToPriceSourceMap");
+//            setFinalStatic(cp);
+//            Map classToPriceSourceMap = (java.util.Map) cp.get(null);
+//            classToPriceSourceMap.put(EODDataStockServerFactory.class, PriceSource.EODData);
+//            loaded = true;
+//        }
+//        catch (NoSuchFieldException ex) {
+//            log.error(null, ex);
+//        }
+//        catch (Exception ex) {
+//            log.error(null, ex);
+//        }
+//        finally {
+//            if (loaded) {
+//                log.debug("Successfully add EODDataStockServerFactory");
+//            } else {
+//                log.error("Could not add EODDataStockServerFactory");
+//            }
+//        }
+//
+//        final Set<Class<? extends StockServerFactory>> eoddataSet = new HashSet<>();
+//        eoddataSet.add(EODDataStockServerFactory.class);
+//
+//        // private static final Map<PriceSource, Set<Class<? extends StockServerFactory>>> priceSourceMap = new EnumMap<>(PriceSource.class);
+//        // priceSourceMap.put(PriceSource.EODData, eoddataSet);
+//        try {
+//            Field psm = org.yccheok.jstock.engine.Factories.class.getDeclaredField("priceSourceMap");
+//            setFinalStatic(psm);
+//            Map priceSourceMap = (java.util.Map) psm.get(null);
+//            priceSourceMap.put(PriceSource.EODData, eoddataSet);
+//            loaded = true;
+//        }
+//        catch (NoSuchFieldException ex) {
+//            log.error(null, ex);
+//        }
+//        catch (Exception ex) {
+//            log.error(null, ex);
+//        }
+//        finally {
+//            if (loaded) {
+//                log.debug("Successfully added EODData, eoddataSet to priceSourceMap");
+//            } else {
+//                log.error("Could not add EODData, eoddataSet to priceSourceMap");
+//            }
+//        }
+//
+//        // final List<StockServerFactory> unitedStateList;
+//        // unitedStateList.add(EODDataStockServerFactory.newInstance());
+//        List unitedStateList = null;
+//        try {
+//            Field usl = org.yccheok.jstock.engine.Factories.class.getDeclaredField("unitedStateList");
+//            setFinalStatic(usl);
+//            unitedStateList = (java.util.List) usl.get(null);
+//            unitedStateList.add(EODDataStockServerFactory.newInstance());
+//            loaded = true;
+//            // private static final Map<Country, List<StockServerFactory>> map = new EnumMap<>(Country.class);
+//            // map.put(Country.UnitedState, unitedStateList);
+//            Field m = org.yccheok.jstock.engine.Factories.class.getDeclaredField("map");
+//            setFinalStatic(m);
+//            Map map = (java.util.Map) m.get(null);
+//            map.put(Country.UnitedState, unitedStateList);
+//            loaded = true;
+//        }
+//        catch (NoSuchFieldException ex) {
+//            log.error(null, ex);
+//        }
+//        catch (Exception ex) {
+//            log.error(null, ex);
+//        }
+//        finally {
+//            if (loaded) {
+//                log.debug("Successfully added EODDataStockServerFactory.newInstance() to unitedStateList");
+//            } else {
+//                log.error("Could not add EODDataStockServerFactory.newInstance() to unitedStateList");
+//            }
+//        }
+//
+//        if (loaded) {
+//            try {
+//                // private static final Map<Country, List<StockServerFactory>> map = new EnumMap<>(Country.class);
+//                // map.put(Country.UnitedState, unitedStateList);
+//                Field m = org.yccheok.jstock.engine.Factories.class.getDeclaredField("map");
+//                setFinalStatic(m);
+//                Map map = (java.util.Map) m.get(null);
+//                map.put(Country.UnitedState, unitedStateList);
+//                loaded = true;
+//                }
+//            catch (NoSuchFieldException ex) {
+//                log.error(null, ex);
+//            }
+//            catch (Exception ex) {
+//                log.error(null, ex);
+//            }
+//            finally {
+//                if (loaded) {
+//                    log.debug("Successfully added unitedStateList to map");
+//                } else {
+//                    log.error("Could not add unitedStateList to map");
+//                }
+//            }
+//        }
+//    }
 }

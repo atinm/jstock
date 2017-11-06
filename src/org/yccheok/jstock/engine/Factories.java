@@ -16,7 +16,6 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-
 package org.yccheok.jstock.engine;
 
 import java.util.ArrayList;
@@ -40,22 +39,22 @@ import org.yccheok.jstock.engine.StockServerFactory;
  */
 public enum Factories {
     INSTANCE;
-          
+
     public List<StockServerFactory> getStockServerFactories(Index index) {
         Country country = index.country;
         return getStockServerFactories(country);
     }
-    
+
     public List<StockServerFactory> getStockServerFactories(Code code) {
         Country country = Utils.toCountry(code);
-        
+
         if (country == Country.Taiwan && isTaiwanOTC(code)) {
             return taiwanOTCList;
         }
-        
+
         return getStockServerFactories(country);
     }
-    
+
     private boolean isTaiwanOTC(Code code) {
         String string = code.toString();
         int index = string.lastIndexOf(".");
@@ -65,7 +64,7 @@ public enum Factories {
         String key = string.substring(index + 1, string.length());
         return key.equalsIgnoreCase("two");
     }
-    
+
     // Avoid using this method unless you're pretty sure what you're looking for.
     // The reason is that, for certain countries, we might require 2 completely
     // different List<StockServerFactory>. As an example, country Taiwan contains
@@ -77,27 +76,27 @@ public enum Factories {
         if (list != null) {
             return java.util.Collections.unmodifiableList(list);
         }
-        
+
         return java.util.Collections.emptyList();
     }
-    
+
     public void updatePriceSource(Country country, final PriceSource priceSource) {
         final Set<Class<? extends StockServerFactory>> classes = priceSourceMap.get(priceSource);
-        
+
         if (classes == null) {
             return;
         }
-        
+
         final List<StockServerFactory> stockServerFactories = map.get(country);
-        
+
         if (null == stockServerFactories) {
             return;
         }
-        
+
         // It isn't possible to perform sorting directly on CopyOnWriteArrayList.
         // at java.util.concurrent.CopyOnWriteArrayList$COWIterator.set(CopyOnWriteArrayList.java:1049)
         final List<StockServerFactory> tmp = new ArrayList<>(stockServerFactories);
-        
+
         Collections.sort(tmp, new Comparator<StockServerFactory>() {
 
             @Override
@@ -107,15 +106,15 @@ public enum Factories {
                 if (result1 && !result2) {
                     return -1;
                 }
-                
+
                 if (!result1 && result2) {
                     return 1;
                 }
-                
+
                 return 0;
             }
         });
-        
+
         // Copy back to CopyOnWriteArrayList.
         for (int i = 0, ei = tmp.size(); i < ei; i++) {
             StockServerFactory f = tmp.get(i);
@@ -124,19 +123,19 @@ public enum Factories {
             }
         }
     }
-    
-    static void setFinalStatic(Field field) throws Exception {
-      field.setAccessible(true);
 
-      Field modifiersField = Field.class.getDeclaredField("modifiers");
-      modifiersField.setAccessible(true);
-      modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
-   }
-    
+    static void setFinalStatic(Field field) throws Exception {
+        field.setAccessible(true);
+
+        Field modifiersField = Field.class.getDeclaredField("modifiers");
+        modifiersField.setAccessible(true);
+        modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+    }
+
     private static final Map<PriceSource, Set<Class<? extends StockServerFactory>>> priceSourceMap = new EnumMap<>(PriceSource.class);
-    
+
     private static final Map<Country, List<StockServerFactory>> map = new EnumMap<>(Country.class);
-    
+
     // Taiwan over-the-counter.
     private static final List<StockServerFactory> taiwanOTCList = new CopyOnWriteArrayList<>();
     private static final Log log = LogFactory.getLog(Factories.class);
@@ -145,7 +144,7 @@ public enum Factories {
         final Set<Class<? extends StockServerFactory>> googleSet = new HashSet<>();
         final Set<Class<? extends StockServerFactory>> yahooSet = new HashSet<>();
         final Set<Class<? extends StockServerFactory>> eoddataSet = new HashSet<>();
-        
+
         final List<StockServerFactory> australiaList = new CopyOnWriteArrayList<>();
         final List<StockServerFactory> austriaList = new CopyOnWriteArrayList<>();
         final List<StockServerFactory> belgiumList = new CopyOnWriteArrayList<>();
@@ -179,31 +178,29 @@ public enum Factories {
         yahooSet.add(YahooStockServerFactory.class);
         yahooSet.add(BrazilYahooStockServerFactory.class);
         eoddataSet.add(EODDataStockServerFactory.class);
-        
+
         // Atin:
         // private static final Map<Class<? extends StockServerFactory>, PriceSource> classToPriceSourceMap = new HashMap<>(); to static
         // change org.yccheok.jstock.engine.Utils.classToPriceSourceMap to static
+        Boolean loaded = false;
         try {
             Field cp = org.yccheok.jstock.engine.Utils.class.getDeclaredField("classToPriceSourceMap");
             setFinalStatic(cp);
             Map classToPriceSourceMap = (java.util.Map) cp.get(null);
             classToPriceSourceMap.put(EODDataStockServerFactory.class, PriceSource.EODData);
-            //Method put = HashMap.class.getMethod("put", null);
-            //put.invoke(classToPriceSourceMap, EODDataStockServerFactory.class, PriceSource.EODData);
-        }
-        catch (NoSuchFieldException ex) {
+            loaded = true;
+        } catch (NoSuchFieldException ex) {
             log.error(null, ex);
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             log.error(null, ex);
-        }
-        finally {
-            log.debug("Successfully add EODDataStockServerFactory");
+        } finally {
+            if (loaded) {
+                log.debug("Successfully add EODDataStockServerFactory");
+            } else {
+                log.error("Could not add EODDataStockServerFactory");
+            }
         }
 
-        //org.yccheok.jstock.engine.Utils.classToPriceSourceMap.put(EODDataStockServerFactory.class, PriceSource.EODData);
-        //
-        
         // *********************************************************************
         // Kindly revise GoogleStockServer's getBestCurrency, for countries
         // which are using GoogleStockServerFactory.
@@ -259,13 +256,13 @@ public enum Factories {
         unitedStateList.add(GoogleStockServerFactory.newInstance());
         unitedStateList.add(YahooStockServerFactory.newInstance());
         unitedStateList.add(EODDataStockServerFactory.newInstance());
-        
+
         taiwanOTCList.add(YahooStockServerFactory.newInstance());
-        
+
         priceSourceMap.put(PriceSource.Google, googleSet);
         priceSourceMap.put(PriceSource.Yahoo, yahooSet);
         priceSourceMap.put(PriceSource.EODData, eoddataSet);
-        
+
         map.put(Country.Australia, australiaList);
         map.put(Country.Austria, austriaList);
         map.put(Country.Belgium, belgiumList);

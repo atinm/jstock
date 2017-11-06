@@ -16,30 +16,30 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-
 package org.yccheok.jstock.engine;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 /**
- * Provides EOD Data server, by using abstract factory pattern. Currently,
- * we only support MarketServer. For rest of the servers, we will either return
+ * Provides EOD Data server, by using abstract factory pattern. Currently, we
+ * only support MarketServer. For rest of the servers, we will either return
  * null or empty server.
  *
  * @author yccheok
  */
 public class EODDataStockServerFactory implements StockServerFactory {
-    
+
     @Override
     public char getId() {
-        return 'b';
+        return 'e';
     }
-    
+
     private EODDataStockServerFactory() {
-        stockServer = new EODDataStockServer();
+        //stockServer = new EODDataStockServer();
+        stockServer = GoogleStockServerFactory.newInstance().getStockServer();
     }
-    
+
     public static StockServerFactory newInstance() {
         return new EODDataStockServerFactory();
     }
@@ -66,20 +66,19 @@ public class EODDataStockServerFactory implements StockServerFactory {
     public StockHistoryServer getStockHistoryServer(Code code) {
         try {
             return new EODDataStockHistoryServer(code);
-        }
-        catch (StockHistoryNotFoundException exp) {
+        } catch (StockHistoryNotFoundException exp) {
             log.error(null, exp);
             return null;
         }
     }
 
     /**
-     * Returns stock history server for this factory based on given code and 
+     * Returns stock history server for this factory based on given code and
      * duration. <code>null</code> will be returned if fail.
-     * 
+     *
      * @param code the code
      * @param duration the duration
-     * @return stock history server for this factory based on given code and 
+     * @return stock history server for this factory based on given code and
      * duration. <code>null</code> will be returned if fail
      */
     @Override
@@ -106,8 +105,8 @@ public class EODDataStockServerFactory implements StockServerFactory {
     public DividendServer getDividendServer() {
         return null;
     }
-    
+
     private final StockServer stockServer;
-    
+
     private static final Log log = LogFactory.getLog(GoogleStockServerFactory.class);
 }
