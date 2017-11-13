@@ -46,7 +46,7 @@ import org.jfree.data.time.Day;
 import org.jfree.data.time.TimeSeries;
 import org.jfree.data.time.TimeSeriesCollection;
 import org.jfree.data.time.TimeSeriesDataItem;
-import org.jfree.ui.RectangleEdge;
+import org.jfree.chart.ui.RectangleEdge;
 import org.yccheok.jstock.engine.Code;
 import org.yccheok.jstock.engine.StockInfo;
 import org.yccheok.jstock.gui.JStockOptions;

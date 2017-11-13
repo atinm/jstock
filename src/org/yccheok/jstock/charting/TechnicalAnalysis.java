@@ -28,6 +28,8 @@ import org.jfree.data.time.Day;
 import org.jfree.data.time.TimeSeries;
 import org.jfree.data.time.TimeSeriesCollection;
 import org.jfree.data.xy.XYDataset;
+import org.jfree.data.xy.XYSeries;
+import org.jfree.data.xy.XYSeriesCollection;
 import org.yccheok.jstock.engine.Stock;
 
 /**
@@ -169,7 +171,47 @@ public class TechnicalAnalysis {
      * @param period the duration period
      * @return SMA time series for charting purpose
      */
-    public static TimeSeries createSMA(List<ChartData> chartDatas, String name, int period) {
+    public static XYSeries createSMA(List<ChartData> chartDatas, String name, int period) {
+        if (period <= 0) {
+            throw new java.lang.IllegalArgumentException("period must be greater than 0");
+        }
+
+        final XYSeries series = new XYSeries(name);
+        final int num = chartDatas.size();
+
+        final Core core = new Core();
+        final int allocationSize = num - core.smaLookback(period);
+        if (allocationSize <= 0) {
+            return series;
+        }
+        final double[] last = new double[num];
+        // Fill up last array.
+        for (int i = 0; i < num; i++) {
+            last[i] = chartDatas.get(i).lastPrice;
+        }
+
+        final double[] output = new double[allocationSize];
+        final MInteger outBegIdx = new MInteger();
+        final MInteger outNbElement = new MInteger();
+
+        core.sma(0, last.length - 1, last, period, outBegIdx, outNbElement, output);
+
+        for (int i = 0; i < outNbElement.value; i++) {
+            series.add(i + outBegIdx.value, output[i]);
+        }
+
+        return series;
+    }
+
+    /**
+     * Returns SMA time series for charting purpose.
+     *
+     * @param chartDatas list of chart data
+     * @param name name for the time series
+     * @param period the duration period
+     * @return SMA time series for charting purpose
+     */
+    public static TimeSeries createSMAOld(List<ChartData> chartDatas, String name, int period) {
         if (period <= 0) {
             throw new java.lang.IllegalArgumentException("period must be greater than 0");
         }
@@ -223,21 +265,21 @@ public class TechnicalAnalysis {
 
         core.macd(0, last.length - 1, last, period.fastPeriod, period.slowPeriod, period.period, outBegIdx, outNbElement, outMACD, outMACDSignal, outMACDHist);
         
-        final TimeSeries macdTimeSeries = new TimeSeries(name);
-        final TimeSeries macdSignalTimeSeries = new TimeSeries(name);
-        final TimeSeries macdHistTimeSeries = new TimeSeries(name);
+        final XYSeries macdTimeSeries = new XYSeries(name);
+        final XYSeries macdSignalTimeSeries = new XYSeries(name);
+        final XYSeries macdHistTimeSeries = new XYSeries(name);
         
         for (int i = 0; i < outNbElement.value; i++) {
-            Day day = new Day(new Date(chartDatas.get(i + outBegIdx.value).timestamp));
+            int day = i + outBegIdx.value;
             macdTimeSeries.add(day, outMACD[i]);
             macdSignalTimeSeries.add(day, outMACDSignal[i]);
             macdHistTimeSeries.add(day, outMACDHist[i]);
         }
         
         return MACD.ChartResult.newInstance(
-                new TimeSeriesCollection(macdTimeSeries), 
-                new TimeSeriesCollection(macdSignalTimeSeries), 
-                new TimeSeriesCollection(macdHistTimeSeries));
+                new XYSeriesCollection(macdTimeSeries), 
+                new XYSeriesCollection(macdSignalTimeSeries), 
+                new XYSeriesCollection(macdHistTimeSeries));
     }
     
     /**
@@ -248,7 +290,39 @@ public class TechnicalAnalysis {
      * @param period the duration period
      * @return EMA time series for charting purpose
      */
-    public static TimeSeries createEMA(List<ChartData> chartDatas, String name, int period) {
+    public static XYSeries createEMA(List<ChartData> chartDatas, String name, int period) {
+        if (period <= 0) {
+            throw new java.lang.IllegalArgumentException("period must be greater than 0");
+        }
+
+        final XYSeries series = new XYSeries(name);
+        final int num = chartDatas.size();
+
+        final Core core = new Core();
+        final int allocationSize = num - core.emaLookback(period);
+        if (allocationSize <= 0) {
+            return series;
+        }
+        final double[] last = new double[num];
+        // Fill up last array.
+        for (int i = 0; i < num; i++) {
+            last[i] = chartDatas.get(i).lastPrice;
+        }
+
+        final double[] output = new double[allocationSize];
+        final MInteger outBegIdx = new MInteger();
+        final MInteger outNbElement = new MInteger();
+
+        core.ema(0, last.length - 1, last, period, outBegIdx, outNbElement, output);
+
+        for (int i = 0; i < outNbElement.value; i++) {
+            series.add(i + outBegIdx.value, output[i]);
+        }
+
+        return series;
+    }
+
+    public static TimeSeries createEMAOld(List<ChartData> chartDatas, String name, int period) {
         if (period <= 0) {
             throw new java.lang.IllegalArgumentException("period must be greater than 0");
         }
@@ -279,7 +353,7 @@ public class TechnicalAnalysis {
 
         return series;
     }
-
+    
     /**
      * Returns CCI XYDataset for charting purpose.
      *
@@ -293,13 +367,13 @@ public class TechnicalAnalysis {
             throw new java.lang.IllegalArgumentException("period must be greater than 0");
         }
 
-        final TimeSeries series = new TimeSeries(name);
+        final XYSeries series = new XYSeries(name);
         final int num = chartDatas.size();
 
         final Core core = new Core();
         final int allocationSize = num - core.cciLookback(period);
         if (allocationSize <= 0) {
-            return new TimeSeriesCollection(series);
+            return new XYSeriesCollection(series);
         }
 
         final double[] high = new double[num];
@@ -319,10 +393,10 @@ public class TechnicalAnalysis {
         core.cci(0, num - 1, high, low, close, period, outBegIdx, outNbElement, output);
 
         for (int i = 0; i < outNbElement.value; i++) {
-            series.add(new Day(new Date(chartDatas.get(i + outBegIdx.value).timestamp)), output[i]);
+            series.add(i + outBegIdx.value, output[i]);
         }
 
-        return new TimeSeriesCollection(series);
+        return new XYSeriesCollection(series);
     }
 
     /**
@@ -333,7 +407,7 @@ public class TechnicalAnalysis {
      * @param period the duration period
      * @return RSI XYDataset for charting purpose
      */
-    public static XYDataset createRSI(List<ChartData> chartDatas, String name, int period) {
+    public static XYDataset createRSIOld(List<ChartData> chartDatas, String name, int period) {
         if (period <= 0) {
             throw new java.lang.IllegalArgumentException("period must be greater than 0");
         }
@@ -367,6 +441,47 @@ public class TechnicalAnalysis {
     }
 
     /**
+     * Returns RSI XYDataset for charting purpose.
+     *
+     * @param chartDatas list of chart data
+     * @param name name for the XYDataset
+     * @param period the duration period
+     * @return RSI XYDataset for charting purpose
+     */
+    public static XYDataset createRSI(List<ChartData> chartDatas, String name, int period) {
+        if (period <= 0) {
+            throw new java.lang.IllegalArgumentException("period must be greater than 0");
+        }
+
+        final XYSeries series = new XYSeries(name);
+        final int num = chartDatas.size();
+
+        final Core core = new Core();
+        final int allocationSize = num - core.rsiLookback(period);
+        if (allocationSize <= 0) {
+            return new XYSeriesCollection(series);
+        }
+
+        final double[] last = new double[num];
+        // Fill up last array.
+        for (int i = 0; i < num; i++) {
+            last[i] = chartDatas.get(i).lastPrice;
+        }
+
+        final double[] output = new double[allocationSize];
+        final MInteger outBegIdx = new MInteger();
+        final MInteger outNbElement = new MInteger();
+
+        core.rsi(0, last.length - 1, last, period, outBegIdx, outNbElement, output);
+
+        for (int i = 0; i < outNbElement.value; i++) {
+            series.add(i + outBegIdx.value, output[i]);
+        }
+
+        return new XYSeriesCollection(series);
+    }
+
+    /**
      * Returns MFI XYDataset for charting purpose.
      *
      * @param chartDatas list of chart data
@@ -379,13 +494,13 @@ public class TechnicalAnalysis {
             throw new java.lang.IllegalArgumentException("period must be greater than 0");
         }
 
-        final TimeSeries series = new TimeSeries(name);
+        final XYSeries series = new XYSeries(name);
         final int num = chartDatas.size();
 
         final Core core = new Core();
         final int allocationSize = num - core.mfiLookback(period);
         if (allocationSize <= 0) {
-            return new TimeSeriesCollection(series);
+            return new XYSeriesCollection(series);
         }
 
         final double[] high = new double[num];
@@ -407,10 +522,10 @@ public class TechnicalAnalysis {
         core.mfi(0, num - 1, high, low, close, volume,  period, outBegIdx, outNbElement, output);
 
         for (int i = 0; i < outNbElement.value; i++) {
-            series.add(new Day(new Date(chartDatas.get(i + outBegIdx.value).timestamp)), output[i]);
+            series.add(i + outBegIdx.value, output[i]);
         }
 
-        return new TimeSeriesCollection(series);
+        return new XYSeriesCollection(series);
     }
 
     /**

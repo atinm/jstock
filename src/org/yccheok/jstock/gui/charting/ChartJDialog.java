@@ -21,16 +21,21 @@ package org.yccheok.jstock.gui.charting;
 
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Graphics2D;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentEvent;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowListener;
+import java.awt.geom.Rectangle2D;
 import java.io.File;
+import java.text.DateFormat;
 import org.yccheok.jstock.engine.*;
 
 import java.util.*;
 import java.text.DecimalFormat;
+import java.text.FieldPosition;
+import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 
 import java.util.concurrent.Executor;
@@ -51,6 +56,9 @@ import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.axis.DateAxis;
 import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.axis.NumberTick;
+import org.jfree.chart.axis.TickType;
+import org.jfree.chart.axis.TickUnit;
 import org.jfree.chart.axis.ValueAxis;
 import org.jfree.chart.event.ChartChangeEvent;
 import org.jfree.chart.event.ChartChangeEventType;
@@ -64,6 +72,8 @@ import org.jfree.chart.renderer.xy.StandardXYItemRenderer;
 import org.jfree.chart.renderer.xy.XYBarRenderer;
 import org.jfree.chart.renderer.xy.XYItemRenderer;
 import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
+import org.jfree.chart.ui.RectangleEdge;
+import org.jfree.chart.ui.TextAnchor;
 import org.jfree.data.Range;
 import org.jfree.data.time.Day;
 import org.jfree.data.time.TimeSeries;
@@ -752,7 +762,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         }
         
         this.priceTimeSeries = this.getPriceTimeSeries(this.chartDatas);
-        this.priceDataset = new TimeSeriesCollection(this.priceTimeSeries);
+        this.priceDataset = new XYSeriesCollection(this.priceTimeSeries);
         this.priceOHLCDataset = this.getOHLCDataset(this.chartDatas);
         this.volumeDataset = this.getVolumeDataset(this.chartDatas);
         // Throw away all the old data.
@@ -978,15 +988,13 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         int best_mid = -1;
         while (low <= high) {
             int mid = (low + high) >>> 1;
-            final Day day = (Day)this.priceTimeSeries.getDataItem(mid).getPeriod();
-            long v = day.getFirstMillisecond();
-
-            if (v > upperBound) {
+            final int dataMid = (int)this.priceTimeSeries.getDataItem(mid).getXValue();
+            if (dataMid > upperBound) {
                 high = mid - 1;
             }
-            else if (v < upperBound) {
+            else if (dataMid < upperBound) {
                 low = mid + 1;
-                long dist = upperBound - v;
+                long dist = upperBound - dataMid;
                 if (dist < best_dist) {
                     best_dist = dist;
                     best_mid = mid;
@@ -1007,9 +1015,8 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         double low_price = Double.MAX_VALUE;
         final DefaultHighLowDataset defaultHighLowDataset = (DefaultHighLowDataset)this.priceOHLCDataset;
         for (int i = best_mid; i >= 0; i--) {
-            final TimeSeriesDataItem item = this.priceTimeSeries.getDataItem(i);
-            final long time = ((Day)item.getPeriod()).getFirstMillisecond();
-            if (time < lowerBound) {
+            final int item = (int)this.priceTimeSeries.getDataItem(i).getXValue();
+            if (item < lowerBound) {
                 break;
             }
             
@@ -1147,84 +1154,84 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
     private void _zoom(int field, int amount) {
         this.chartPanel.restoreAutoBounds();
 
-        final int itemCount = this.priceTimeSeries.getItemCount();
-        final Day day = (Day)this.priceTimeSeries.getDataItem(itemCount - 1).getPeriod();
-        // Candle stick takes up half day space.
-        // Volume price chart's volume information takes up whole day space.
-        final long end = day.getFirstMillisecond() + (this.getCurrentType() == Type.Candlestick ? (1000 * 60 * 60 * 12) : (1000 * 60 * 60 * 24 - 1));
-        final Calendar calendar = Calendar.getInstance();
-        // -1. Calendar's month is 0 based but JFreeChart's month is 1 based.
-        calendar.set(day.getYear(), day.getMonth() - 1, day.getDayOfMonth(), 0, 0, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-
-        calendar.add(field, amount);
-        // Candle stick takes up half day space.
-        // Volume price chart's volume information does not take up any space.
-        final long start = Math.max(0, calendar.getTimeInMillis() - (this.getCurrentType() == Type.Candlestick ? (1000 * 60 * 60 * 12) : 0));
-        final ValueAxis valueAxis = this.getPlot().getDomainAxis();
-
-        if (priceTimeSeries.getItemCount() > 0) {
-            if (start < priceTimeSeries.getTimePeriod(0).getFirstMillisecond()) {
-                // To prevent zoom-out too much.
-                // This happens when user demands for 10 years zoom, where we
-                // are only having 5 years data.
-                return;
-            }
-        }
-        
-        valueAxis.setRange(start, end);
-
-        double min = Double.MAX_VALUE;
-        double max = Double.MIN_VALUE;
-        double max_volume = Double.MIN_VALUE;
-        final DefaultHighLowDataset defaultHighLowDataset = (DefaultHighLowDataset)this.priceOHLCDataset;
-        
-        for (int i = itemCount - 1; i >= 0; i--) {
-            final TimeSeriesDataItem item = this.priceTimeSeries.getDataItem(i);
-            final Day d = (Day)item.getPeriod();
-            if (d.getFirstMillisecond() < start) {
-                break;
-            }
-            
-            final double high = defaultHighLowDataset.getHighValue(0, i);
-            final double low = defaultHighLowDataset.getLowValue(0, i);
-            final double volume = defaultHighLowDataset.getVolumeValue(0, i);
-
-            if (max < high) {
-                max = high;
-            }
-            if (min > low) {
-                min = low;
-            }
-            if (max_volume < volume) {
-                max_volume = volume;
-            }
-        }
-
-        if (min > max) {
-            return;
-        }
-
-        final ValueAxis rangeAxis = this.getPlot().getRangeAxis();
-        final Range rangeAxisRange = rangeAxis.getRange();
-        // Increase each side by 1%
-        double tolerance = 0.01 * (max - min);
-        // The tolerance must within range [0.01, 1.0]
-        tolerance = Math.min(Math.max(0.01, tolerance), 1.0);
-        // The range must within the original chart range.
-        min = Math.max(rangeAxisRange.getLowerBound(), min - tolerance);
-        max = Math.min(rangeAxisRange.getUpperBound(), max + tolerance);
-
-        this.getPlot().getRangeAxis().setRange(min, max);
-
-        if (this.getPlot().getRangeAxisCount() > 1) {
-            final double volumeUpperBound = this.getPlot().getRangeAxis(1).getRange().getUpperBound();
-            final double suggestedVolumneUpperBound = max_volume * 4;
-            // To prevent over zoom-in.
-            if (suggestedVolumneUpperBound < volumeUpperBound) {
-                this.getPlot().getRangeAxis(1).setRange(0, suggestedVolumneUpperBound);
-            }
-        }
+//        final int itemCount = this.priceTimeSeries.getItemCount();
+//        final int day = (int)this.priceTimeSeries.getDataItem(itemCount - 1).getXValue();
+//        // Candle stick takes up half day space.
+//        // Volume price chart's volume information takes up whole day space.
+//        final long end = day.getFirstMillisecond() + (this.getCurrentType() == Type.Candlestick ? (1000 * 60 * 60 * 12) : (1000 * 60 * 60 * 24 - 1));
+//        final Calendar calendar = Calendar.getInstance();
+//        // -1. Calendar's month is 0 based but JFreeChart's month is 1 based.
+//        calendar.set(day.getYear(), day.getMonth() - 1, day.getDayOfMonth(), 0, 0, 0);
+//        calendar.set(Calendar.MILLISECOND, 0);
+//
+//        calendar.add(field, amount);
+//        // Candle stick takes up half day space.
+//        // Volume price chart's volume information does not take up any space.
+//        final long start = Math.max(0, calendar.getTimeInMillis() - (this.getCurrentType() == Type.Candlestick ? (1000 * 60 * 60 * 12) : 0));
+//        final ValueAxis valueAxis = this.getPlot().getDomainAxis();
+//
+//        if (priceTimeSeries.getItemCount() > 0) {
+//            if (start < priceTimeSeries.getTimePeriod(0).getFirstMillisecond()) {
+//                // To prevent zoom-out too much.
+//                // This happens when user demands for 10 years zoom, where we
+//                // are only having 5 years data.
+//                return;
+//            }
+//        }
+//        
+//        valueAxis.setRange(start, end);
+//
+//        double min = Double.MAX_VALUE;
+//        double max = Double.MIN_VALUE;
+//        double max_volume = Double.MIN_VALUE;
+//        final DefaultHighLowDataset defaultHighLowDataset = (DefaultHighLowDataset)this.priceOHLCDataset;
+//        
+//        for (int i = itemCount - 1; i >= 0; i--) {
+//            final TimeSeriesDataItem item = this.priceTimeSeries.getDataItem(i);
+//            final Day d = (Day)item.getPeriod();
+//            if (d.getFirstMillisecond() < start) {
+//                break;
+//            }
+//            
+//            final double high = defaultHighLowDataset.getHighValue(0, i);
+//            final double low = defaultHighLowDataset.getLowValue(0, i);
+//            final double volume = defaultHighLowDataset.getVolumeValue(0, i);
+//
+//            if (max < high) {
+//                max = high;
+//            }
+//            if (min > low) {
+//                min = low;
+//            }
+//            if (max_volume < volume) {
+//                max_volume = volume;
+//            }
+//        }
+//
+//        if (min > max) {
+//            return;
+//        }
+//
+//        final ValueAxis rangeAxis = this.getPlot().getRangeAxis();
+//        final Range rangeAxisRange = rangeAxis.getRange();
+//        // Increase each side by 1%
+//        double tolerance = 0.01 * (max - min);
+//        // The tolerance must within range [0.01, 1.0]
+//        tolerance = Math.min(Math.max(0.01, tolerance), 1.0);
+//        // The range must within the original chart range.
+//        min = Math.max(rangeAxisRange.getLowerBound(), min - tolerance);
+//        max = Math.min(rangeAxisRange.getUpperBound(), max + tolerance);
+//
+//        this.getPlot().getRangeAxis().setRange(min, max);
+//
+//        if (this.getPlot().getRangeAxisCount() > 1) {
+//            final double volumeUpperBound = this.getPlot().getRangeAxis(1).getRange().getUpperBound();
+//            final double suggestedVolumneUpperBound = max_volume * 4;
+//            // To prevent over zoom-in.
+//            if (suggestedVolumneUpperBound < volumeUpperBound) {
+//                this.getPlot().getRangeAxis(1).setRange(0, suggestedVolumneUpperBound);
+//            }
+//        }
     }
 
     private void jLabel10MouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_jLabel10MouseClicked
@@ -1318,7 +1325,8 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         XYPlot plot = new XYPlot(priceDataset, timeAxis, rangeAxis1, null);
 
         XYItemRenderer renderer1 = new XYLineAndShapeRenderer(true, false);
-        renderer1.setBaseToolTipGenerator(
+        //renderer1.setBaseToolTipGenerator(
+        renderer1.setDefaultToolTipGenerator(
             new StandardXYToolTipGenerator(
                 StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                 new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0.00#")
@@ -1333,7 +1341,8 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         plot.mapDatasetToRangeAxis(1, 1);
 
         XYBarRenderer renderer2 = new XYBarRenderer(0.20);
-        renderer2.setBaseToolTipGenerator(
+        //renderer2.setBaseToolTipGenerator(
+        renderer2.setDefaultToolTipGenerator(
             new StandardXYToolTipGenerator(
                 StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                 new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0,000.00")
@@ -1358,7 +1367,17 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         return chart;
     }
 
-    private TimeSeries getPriceTimeSeries(List<ChartData> chartDatas) {
+    private XYSeries getPriceTimeSeries(List<ChartData> chartDatas) {
+        // create dataset 1...
+        XYSeries series1 = new XYSeries(GUIBundle.getString("ChartJDialog_Price"));
+        
+        for (int i=0; i<chartDatas.size(); i++) {
+            series1.add(i, chartDatas.get(i).lastPrice);
+        }
+        return series1;
+    }
+
+    private TimeSeries getPriceTimeSeriesOld(List<ChartData> chartDatas) {
         // create dataset 1...
         TimeSeries series1 = new TimeSeries(GUIBundle.getString("ChartJDialog_Price"));
         
@@ -1367,7 +1386,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         }
         return series1;
     }
-
+    
     /**
      * Creates a sample dataset.
      *
@@ -1435,12 +1454,15 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
     private JFreeChart createCandlestickChart(OHLCDataset priceOHLCDataset) {
         final String title = getBestStockName();
         
-        final ValueAxis timeAxis = new DateAxis(GUIBundle.getString("ChartJDialog_Date"));
+        //final ValueAxis timeAxis = new DateAxis(GUIBundle.getString("ChartJDialog_Date"));
+        final NumberDateAxis timeAxis = new NumberDateAxis(GUIBundle.getString("ChartJDialog_Date"));
         final NumberAxis valueAxis = new NumberAxis(GUIBundle.getString("ChartJDialog_Price"));
         valueAxis.setAutoRangeIncludesZero(false);
         valueAxis.setUpperMargin(0.0);
         valueAxis.setLowerMargin(0.0);
         XYPlot plot = new XYPlot(priceOHLCDataset, timeAxis, valueAxis, null);
+        timeAxis.setStandardTickUnits(NumberAxis.createIntegerTickUnits());
+        timeAxis.setNumberFormatOverride(new TranslatingFormat((TranslatingDataset)plot.getDataset()));
 
         final CandlestickRenderer candlestickRenderer = new CandlestickRenderer();
         plot.setRenderer(candlestickRenderer);
@@ -1460,6 +1482,197 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         chart.addChangeListener(this.getChartChangeListner());
 
         return chart;        
+    }
+    
+    public static class TranslatingDataset extends DefaultHighLowDataset {
+
+        public TranslatingDataset(Comparable seriesKey, Date[] date, double[] high, double[] low, double[] open, double[] close, double[] volume) {
+            super(seriesKey, date, high, low, open, close, volume);
+        }
+
+        public double getXValue(int series, int item) {
+            if ((item < 0) || (item >= getItemCount(series)))
+                return Double.NaN;
+            return item;
+        }
+        public Date getXDate(int series, int item) {
+            if ((item < 0) || (item >= getItemCount(series)))
+                return new Date();
+            return new Date((long)super.getXValue(series, item));
+        }
+    }
+    
+    public static class TranslatingFormat extends DecimalFormat {
+        final TranslatingDataset    xlateDS;
+        final DateFormat fmt = new SimpleDateFormat("MM/dd");
+
+        public TranslatingFormat(TranslatingDataset ds) {
+            xlateDS = ds;
+        }
+
+        public StringBuffer format(double number, StringBuffer toAppendTo, FieldPosition pos) {
+            if (Double.isNaN(number))
+                return toAppendTo;
+            Date date = xlateDS.getXDate(0, (int)number);
+            return toAppendTo.append(fmt.format(date));
+        }
+    }
+    
+    public static class NumberDateAxis extends NumberAxis {
+        public NumberDateAxis() {
+            super((String)null);
+        }
+
+        public NumberDateAxis(String label) {
+            super(label);
+        }
+
+        protected java.util.List refreshTicksHorizontal(Graphics2D g2, Rectangle2D dataArea, RectangleEdge edge) {
+            java.util.List result = new ArrayList();
+            Font tickLabelFont = this.getTickLabelFont();
+            g2.setFont(tickLabelFont);
+            if (this.isAutoTickUnitSelection()) {
+                this.selectAutoTickUnit(g2, dataArea, edge);
+            }
+
+            TickUnit tu = this.getTickUnit();
+            double size = tu.getSize();
+            int count = this.calculateVisibleTickCount();
+            double lowestTickValue = this.calculateLowestVisibleTickValue();
+            if (count <= 500) {
+                int minorTickSpaces = this.getMinorTickCount();
+                if (minorTickSpaces <= 0) {
+                    minorTickSpaces = tu.getMinorTickCount();
+                }
+
+                int i;
+                double currentTickValue;
+                for(i = 1; i < minorTickSpaces; ++i) {
+                    currentTickValue = lowestTickValue - size * (double)i / (double)minorTickSpaces;
+                    if (this.getRange().contains(currentTickValue)) {
+                        result.add(new NumberTick(TickType.MINOR, currentTickValue, "", TextAnchor.TOP_CENTER, TextAnchor.CENTER, 0.0D));
+                    }
+                }
+
+                for(i = 0; i < count; ++i) {
+                    currentTickValue = lowestTickValue + (double)i * size;
+                    NumberFormat formatter = this.getNumberFormatOverride();
+                    String tickLabel;
+                    if (formatter != null) {
+                        tickLabel = formatter.format(currentTickValue, new StringBuffer(), new java.text.FieldPosition(0)).toString();
+                    } else {
+                        tickLabel = this.getTickUnit().valueToString(currentTickValue);
+                    }
+
+                    double angle = 0.0D;
+                    TextAnchor anchor;
+                    TextAnchor rotationAnchor;
+                    if (this.isVerticalTickLabels()) {
+                        anchor = TextAnchor.CENTER_RIGHT;
+                        rotationAnchor = TextAnchor.CENTER_RIGHT;
+                        if (edge == RectangleEdge.TOP) {
+                            angle = 1.5707963267948966D;
+                        } else {
+                            angle = -1.5707963267948966D;
+                        }
+                    } else if (edge == RectangleEdge.TOP) {
+                        anchor = TextAnchor.BOTTOM_CENTER;
+                        rotationAnchor = TextAnchor.BOTTOM_CENTER;
+                    } else {
+                        anchor = TextAnchor.TOP_CENTER;
+                        rotationAnchor = TextAnchor.TOP_CENTER;
+                    }
+
+                    org.jfree.chart.axis.Tick tick = new NumberTick(new Double(currentTickValue), tickLabel, anchor, rotationAnchor, angle);
+                    result.add(tick);
+                    double nextTickValue = lowestTickValue + (double)(i + 1) * size;
+
+                    for(int minorTick = 1; minorTick < minorTickSpaces; ++minorTick) {
+                        double minorTickValue = currentTickValue + (nextTickValue - currentTickValue) * (double)minorTick / (double)minorTickSpaces;
+                        if (this.getRange().contains(minorTickValue)) {
+                            result.add(new NumberTick(TickType.MINOR, minorTickValue, "", TextAnchor.TOP_CENTER, TextAnchor.CENTER, 0.0D));
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+        
+        protected java.util.List refreshTicksVertical(Graphics2D g2, Rectangle2D dataArea, RectangleEdge edge) {
+            List result = new ArrayList();
+            result.clear();
+            Font tickLabelFont = this.getTickLabelFont();
+            g2.setFont(tickLabelFont);
+            if (this.isAutoTickUnitSelection()) {
+                this.selectAutoTickUnit(g2, dataArea, edge);
+            }
+
+            TickUnit tu = this.getTickUnit();
+            double size = tu.getSize();
+            int count = this.calculateVisibleTickCount();
+            double lowestTickValue = this.calculateLowestVisibleTickValue();
+            if (count <= 500) {
+                int minorTickSpaces = this.getMinorTickCount();
+                if (minorTickSpaces <= 0) {
+                    minorTickSpaces = tu.getMinorTickCount();
+                }
+
+                int i;
+                double currentTickValue;
+                for(i = 1; i < minorTickSpaces; ++i) {
+                    currentTickValue = lowestTickValue - size * (double)i / (double)minorTickSpaces;
+                    if (this.getRange().contains(currentTickValue)) {
+                        result.add(new NumberTick(TickType.MINOR, currentTickValue, "", TextAnchor.TOP_CENTER, TextAnchor.CENTER, 0.0D));
+                    }
+                }
+
+                for(i = 0; i < count; ++i) {
+                    currentTickValue = lowestTickValue + (double)i * size;
+                    NumberFormat formatter = this.getNumberFormatOverride();
+                    String tickLabel;
+                    if (formatter != null) {
+                        tickLabel = formatter.format(currentTickValue, new StringBuffer(), new java.text.FieldPosition(0)).toString();
+                    } else {
+                        tickLabel = this.getTickUnit().valueToString(currentTickValue);
+                    }
+
+                    double angle = 0.0D;
+                    TextAnchor anchor;
+                    TextAnchor rotationAnchor;
+                    if (this.isVerticalTickLabels()) {
+                        if (edge == RectangleEdge.LEFT) {
+                            anchor = TextAnchor.BOTTOM_CENTER;
+                            rotationAnchor = TextAnchor.BOTTOM_CENTER;
+                            angle = -1.5707963267948966D;
+                        } else {
+                            anchor = TextAnchor.BOTTOM_CENTER;
+                            rotationAnchor = TextAnchor.BOTTOM_CENTER;
+                            angle = 1.5707963267948966D;
+                        }
+                    } else if (edge == RectangleEdge.LEFT) {
+                        anchor = TextAnchor.CENTER_RIGHT;
+                        rotationAnchor = TextAnchor.CENTER_RIGHT;
+                    } else {
+                        anchor = TextAnchor.CENTER_LEFT;
+                        rotationAnchor = TextAnchor.CENTER_LEFT;
+                    }
+
+                    org.jfree.chart.axis.Tick tick = new NumberTick(new Double(currentTickValue), tickLabel, anchor, rotationAnchor, angle);
+                    result.add(tick);
+                    double nextTickValue = lowestTickValue + (double)(i + 1) * size;
+
+                    for(int minorTick = 1; minorTick < minorTickSpaces; ++minorTick) {
+                        double minorTickValue = currentTickValue + (nextTickValue - currentTickValue) * (double)minorTick / (double)minorTickSpaces;
+                        if (this.getRange().contains(minorTickValue)) {
+                            result.add(new NumberTick(TickType.MINOR, minorTickValue, "", TextAnchor.TOP_CENTER, TextAnchor.CENTER, 0.0D));
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
     }
     
     /**
@@ -1489,7 +1702,9 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
             i++;
         }
         
-        return new DefaultHighLowDataset(GUIBundle.getString("ChartJDialog_Price"), date, high, low, open,
+        //return new DefaultHighLowDataset(GUIBundle.getString("ChartJDialog_Price"), date, high, low, open,
+        //        close, volume);
+        return new TranslatingDataset(GUIBundle.getString("ChartJDialog_Price"), date, high, low, open,
                 close, volume);
     }
 
@@ -1600,7 +1815,8 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
                 XYPlot plot = new XYPlot(dataset, timeAxis, rangeAxis1, null);
 
                 XYItemRenderer renderer1 = new XYLineAndShapeRenderer(true, false);
-                renderer1.setBaseToolTipGenerator(
+                //renderer1.setBaseToolTipGenerator(
+                renderer1.setDefaultToolTipGenerator(
                     new StandardXYToolTipGenerator(
                         StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                         new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0.00#")
@@ -1683,7 +1899,8 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
                 XYPlot plot = new XYPlot(dataset, timeAxis, rangeAxis1, null);
 
                 XYItemRenderer renderer1 = new XYLineAndShapeRenderer(true, false);
-                renderer1.setBaseToolTipGenerator(
+                //renderer1.setBaseToolTipGenerator(
+                renderer1.setDefaultToolTipGenerator(
                     new StandardXYToolTipGenerator(
                         StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                         new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0.00#")
@@ -1764,7 +1981,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
                 XYPlot plot = new XYPlot(dataset, timeAxis, rangeAxis1, null);
 
                 XYItemRenderer renderer1 = new XYLineAndShapeRenderer(true, false);
-                renderer1.setBaseToolTipGenerator(
+                renderer1.setDefaultToolTipGenerator(
                     new StandardXYToolTipGenerator(
                         StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                         new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0.00#")
@@ -1851,7 +2068,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
                 XYPlot plot = new XYPlot(macdChartResult.outMACD, timeAxis, rangeAxis1, null);
 
                 XYItemRenderer renderer1 = new XYLineAndShapeRenderer(true, false);
-                renderer1.setBaseToolTipGenerator(
+                renderer1.setDefaultToolTipGenerator(
                     new StandardXYToolTipGenerator(
                         StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                         new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0.00#")
@@ -1863,7 +2080,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
                 // MACD SIGNAL!
                 plot.setDataset(1, macdChartResult.outMACDSignal);
                 XYItemRenderer renderer2 = new XYLineAndShapeRenderer(true, false);
-                renderer2.setBaseToolTipGenerator(
+                renderer2.setDefaultToolTipGenerator(
                     new StandardXYToolTipGenerator(
                         StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                         new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0.00#")
@@ -1878,7 +2095,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
 
                 XYBarRenderer renderer3 = new XYBarRenderer(0.20);
                 
-                renderer3.setBaseToolTipGenerator(
+                renderer3.setDefaultToolTipGenerator(
                     new StandardXYToolTipGenerator(
                         StandardXYToolTipGenerator.DEFAULT_TOOL_TIP_FORMAT,
                         new SimpleDateFormat("d-MMM-yyyy"), new DecimalFormat("0,000.00")
@@ -1945,27 +2162,27 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
 
         final TAEx taEx = TAEx.newInstance(TA.EMA, new Integer(days));
         if (show) {
-            TimeSeries timeSeries = null;
+            XYSeries dataSeries = null;
             XYDataset dataSet = null;
             final Integer days_integer = days;
             if (false == time_series_exponential_moving_average_map.containsKey(days_integer)) {
-                timeSeries = TechnicalAnalysis.createEMA(this.chartDatas, this.getEMAKey(days), days);
-                dataSet = new TimeSeriesCollection(timeSeries);
+                dataSeries = TechnicalAnalysis.createEMA(this.chartDatas, this.getEMAKey(days), days);
+                dataSet = new XYSeriesCollection(dataSeries);
                 // Do not put everything into map. We will out of memory.
                 if (this.time_series_exponential_moving_average_map.size() < MAX_MAP_SIZE) {
-                    time_series_exponential_moving_average_map.put(days_integer, timeSeries);
+                    time_series_exponential_moving_average_map.put(days_integer, dataSeries);
                 }
             }
             else {
-                timeSeries = time_series_exponential_moving_average_map.get(days_integer);
-                dataSet =  new TimeSeriesCollection(timeSeries);
+                dataSeries = time_series_exponential_moving_average_map.get(days_integer);
+                dataSet =  new XYSeriesCollection(dataSeries);
             }
 
             {
                 if (this.activeTAExs.contains(taEx) == false)
                 {
                     // Avoid duplication.
-                    ((TimeSeriesCollection)this.priceDataset).addSeries(timeSeries);
+                    ((XYSeriesCollection)this.priceDataset).addSeries(dataSeries);
                 }
             }
             {
@@ -2080,12 +2297,12 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
         
         final TAEx taEx = TAEx.newInstance(TA.SMA, new Integer(days));
         if (show) {
-            TimeSeries timeSeries = null;
+            XYSeries timeSeries = null;
             XYDataset dataSet = null;
             final Integer days_integer = days;
             if (false == time_series_moving_average_map.containsKey(days_integer)) {
                 timeSeries = TechnicalAnalysis.createSMA(this.chartDatas, this.getSMAKey(days), days);
-                dataSet = new TimeSeriesCollection(timeSeries);
+                dataSet = new XYSeriesCollection(timeSeries);
                 // Do not put everything into map. We will out of memory.
                 if (this.time_series_moving_average_map.size() < MAX_MAP_SIZE) {
                     time_series_moving_average_map.put(days_integer, timeSeries);
@@ -2093,14 +2310,14 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
             }
             else {
                 timeSeries = time_series_moving_average_map.get(days_integer);
-                dataSet =  new TimeSeriesCollection(timeSeries);
+                dataSet =  new XYSeriesCollection(timeSeries);
             }
 
             {
                 if (this.activeTAExs.contains(taEx) == false)
                 {
                     // Avoid duplication.
-                    ((TimeSeriesCollection)this.priceDataset).addSeries(timeSeries);
+                    ((XYSeriesCollection)this.priceDataset).addSeries(timeSeries);
                 }                
             }
             {
@@ -2206,8 +2423,8 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
     private List<ChartData> chartDatas;
 
     private final ChartPanel chartPanel;
-    private final Map<Integer, TimeSeries> time_series_moving_average_map = new HashMap<Integer, TimeSeries>();
-    private final Map<Integer, TimeSeries> time_series_exponential_moving_average_map = new HashMap<Integer, TimeSeries>();
+    private final Map<Integer, XYSeries> time_series_moving_average_map = new HashMap<Integer, XYSeries>();
+    private final Map<Integer, XYSeries> time_series_exponential_moving_average_map = new HashMap<Integer, XYSeries>();
     /* Days to series index. (For main plot only) */
     private final Map<TAEx, Integer> xydata_index_map = new HashMap<TAEx, Integer>();
     private final List<TAEx> activeTAExs = new ArrayList<TAEx>();
@@ -2221,7 +2438,7 @@ public class ChartJDialog extends javax.swing.JFrame implements WindowListener {
 
     private XYDataset priceDataset;
     private XYDataset volumeDataset;
-    private TimeSeries priceTimeSeries;
+    private XYSeries priceTimeSeries;
     private OHLCDataset priceOHLCDataset;
     private JFreeChart priceVolumeChart;
     private JFreeChart candlestickChart;

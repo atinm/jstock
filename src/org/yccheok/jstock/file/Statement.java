@@ -547,7 +547,7 @@ public class Statement {
             atoms.get(0).getType().equals(guiBundleWrapper.getString("MainFrame_Code")) &&
             atoms.get(1).getType().equals(guiBundleWrapper.getString("MainFrame_Symbol"))
             ) {
-                return Type.UserDefinedDatabase;
+                return Type.StockIndicatorScanner;
             }            
         }
         if (size == 2) {
